@@ -10,23 +10,670 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
-    - name: Build APK with Gradle
-      run: ./gradlew assembleRelease
+      - name: Generar estructura completa del proyecto Android
+        run: |
+          mkdir -p app/src/main/java/com/security/lockscreen
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/values
 
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: LockScreenSecurityLock-NubiaZ60Ultra.apk
-        path: app/build/outputs/apk/release/app-release-unsigned.apk
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "LockScreenSecurityLock"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.5.0" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.security.lockscreen"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.security.lockscreen"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 2
+                  versionName = "2.0.0-nebula-aios"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
+              implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+              implementation("androidx.biometric:biometric:1.1.0")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">LockScreen Security Lock</string>
+              <string name="accessibility_service_description">Protección de barra de estado en pantalla de bloqueo para Nubia Z60 Ultra</string>
+          </resources>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/xml/accessibility_service_config.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="10"
+              android:canRetrieveWindowContent="true"
+              android:canPerformGestures="true"
+              android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+              android:description="@string/accessibility_service_description" />
+          EOF
+
+          cat << 'EOF' > app/src/main/res/xml/device_admin_sample.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-policies>
+                  <limit-password />
+                  <watch-login />
+                  <reset-password />
+                  <force-lock />
+                  <wipe-data />
+                  <expire-password />
+                  <encrypted-storage />
+                  <disable-keyguard-features />
+              </uses-policies>
+          </device-admin>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:padding="24dp"
+              android:gravity="center_horizontal">
+
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="LockScreen Security Lock"
+                  android:textSize="22sp"
+                  android:textStyle="bold"
+                  android:layout_marginBottom="24dp" />
+
+              <Switch
+                  android:id="@+id/switchNormalToggle"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Habilitar protección de barra de bloqueo"
+                  android:minHeight="48dp"
+                  android:layout_marginBottom="24dp" />
+
+              <TextView
+                  android:id="@+id/tvAdbAntiUninstallStatus"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Estado Anti-ADB"
+                  android:layout_marginBottom="16dp" />
+
+              <Button
+                  android:id="@+id/btnAdbProtection"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="Alternar Blindaje Anti-ADB"
+                  android:layout_marginBottom="16dp" />
+
+              <Button
+                  android:id="@+id/btnPermissions"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="1. Conceder Permiso de Superposición (Overlay)"
+                  android:layout_marginBottom="8dp" />
+
+              <Button
+                  android:id="@+id/btnAccessibility"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="2. Activar Servicio de Accesibilidad" />
+
+          </LinearLayout>
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+              <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@android:drawable/ic_lock_lock"
+                  android:label="LockScreen Security Lock"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".LockScreenAccessibilityService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config" />
+                  </service>
+
+                  <service
+                      android:name=".SecurityForegroundService"
+                      android:foregroundServiceType="specialUse"
+                      android:exported="false">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Nebula AIOS Lockscreen Status Bar and Anti-Theft Guard" />
+                  </service>
+
+                  <receiver
+                      android:name=".LockScreenReceiver"
+                      android:enabled="true"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.SCREEN_OFF" />
+                          <action android:name="android.intent.action.SCREEN_ON" />
+                          <action android:name="android.intent.action.USER_PRESENT" />
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                      </intent-filter>
+                  </receiver>
+
+                  <receiver
+                      android:name=".SecurityDeviceAdminReceiver"
+                      android:permission="android.permission.BIND_DEVICE_ADMIN"
+                      android:exported="true">
+                      <meta-data
+                          android:name="android.app.device_admin"
+                          android:resource="@xml/device_admin_sample" />
+                      <intent-filter>
+                          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+                      </intent-filter>
+                  </receiver>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/LockScreenAccessibilityService.kt
+          package com.security.lockscreen
+
+          import android.accessibilityservice.AccessibilityService
+          import android.app.KeyguardManager
+          import android.content.Context
+          import android.os.SystemClock
+          import android.util.Log
+          import android.view.accessibility.AccessibilityEvent
+
+          class LockScreenAccessibilityService : AccessibilityService() {
+
+              private lateinit var keyguardManager: KeyguardManager
+              private var lastActionTime: Long = 0
+
+              override fun onServiceConnected() {
+                  super.onServiceConnected()
+                  keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+              }
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+                  if (event == null) return
+                  val prefs = getSharedPreferences("security_lock_prefs", Context.MODE_PRIVATE)
+                  if (!prefs.getBoolean(MainActivity.PREF_PROTECTION_ENABLED, true)) return
+
+                  if (!keyguardManager.isKeyguardLocked) return
+
+                  val packageName = event.packageName?.toString() ?: ""
+                  val className = event.className?.toString() ?: ""
+
+                  if (packageName == "com.android.systemui") {
+                      val isStatusShade = className.contains("NotificationPanelView", ignoreCase = true) ||
+                              className.contains("StatusBar", ignoreCase = true) ||
+                              className.contains("QuickSettings", ignoreCase = true) ||
+                              className.contains("QSTileView", ignoreCase = true) ||
+                              className.contains("ExpandableNotificationRow", ignoreCase = true)
+
+                      val now = SystemClock.uptimeMillis()
+                      if ((isStatusShade || event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
+                          now - lastActionTime > 100
+                      ) {
+                          lastActionTime = now
+                          performGlobalAction(GLOBAL_ACTION_BACK)
+                      }
+                  }
+              }
+
+              override fun onInterrupt() {}
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/LockScreenReceiver.kt
+          package com.security.lockscreen
+
+          import android.app.KeyguardManager
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.PixelFormat
+          import android.os.Build
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.view.View
+          import android.view.WindowManager
+
+          class LockScreenReceiver : BroadcastReceiver() {
+
+              companion object {
+                  private var blockerLayout: View? = null
+                  private const val OVERLAY_HEIGHT_PX = 84
+              }
+
+              override fun onReceive(context: Context, intent: Intent) {
+                  val action = intent.action ?: return
+                  val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+                  val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                  val prefs = context.getSharedPreferences("security_lock_prefs", Context.MODE_PRIVATE)
+
+                  when (action) {
+                      Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON -> {
+                          if (prefs.getBoolean(MainActivity.PREF_PROTECTION_ENABLED, true) &&
+                              keyguardManager?.isKeyguardLocked == true &&
+                              Settings.canDrawOverlays(context)
+                          ) {
+                              addTopEdgeBlocker(context, windowManager)
+                          }
+                      }
+                      Intent.ACTION_USER_PRESENT -> removeTopEdgeBlocker(windowManager)
+                      Intent.ACTION_BOOT_COMPLETED -> SecurityForegroundService.startService(context)
+                  }
+              }
+
+              private fun addTopEdgeBlocker(context: Context, windowManager: WindowManager) {
+                  if (blockerLayout != null) return
+                  try {
+                      val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                      } else {
+                          @Suppress("DEPRECATION")
+                          WindowManager.LayoutParams.TYPE_SYSTEM_ERROR
+                      }
+
+                      val params = WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          OVERLAY_HEIGHT_PX,
+                          layoutType,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                                  WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                                  WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                          PixelFormat.TRANSLUCENT
+                      ).apply {
+                          gravity = Gravity.TOP
+                      }
+
+                      val view = View(context).apply {
+                          setOnTouchListener { _, _ -> true }
+                      }
+
+                      windowManager.addView(view, params)
+                      blockerLayout = view
+                  } catch (e: Exception) {
+                      e.printStackTrace()
+                  }
+              }
+
+              private fun removeTopEdgeBlocker(windowManager: WindowManager) {
+                  blockerLayout?.let {
+                      try {
+                          windowManager.removeView(it)
+                      } catch (e: Exception) {
+                          e.printStackTrace()
+                      }
+                      blockerLayout = null
+                  }
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/SecurityForegroundService.kt
+          package com.security.lockscreen
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.content.IntentFilter
+          import android.os.Build
+          import android.os.IBinder
+          import androidx.core.app.NotificationCompat
+          import androidx.core.content.ContextCompat
+
+          class SecurityForegroundService : Service() {
+
+              private val screenReceiver = LockScreenReceiver()
+
+              companion object {
+                  private const val CHANNEL_ID = "lockscreen_security_channel"
+                  private const val NOTIFICATION_ID = 1001
+
+                  fun startService(context: Context) {
+                      val intent = Intent(context, SecurityForegroundService::class.java)
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                          context.startForegroundService(intent)
+                      } else {
+                          context.startService(intent)
+                      }
+                  }
+              }
+
+              override fun onCreate() {
+                  super.onCreate()
+                  createNotificationChannel()
+                  startForeground(NOTIFICATION_ID, buildForegroundNotification())
+
+                  val filter = IntentFilter().apply {
+                      addAction(Intent.ACTION_SCREEN_ON)
+                      addAction(Intent.ACTION_SCREEN_OFF)
+                      addAction(Intent.ACTION_USER_PRESENT)
+                  }
+                  ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  try {
+                      unregisterReceiver(screenReceiver)
+                  } catch (e: Exception) {
+                      e.printStackTrace()
+                  }
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              private fun buildForegroundNotification(): Notification {
+                  val openIntent = Intent(this, MainActivity::class.java)
+                  val pendingIntent = PendingIntent.getActivity(
+                      this, 0, openIntent,
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                  )
+
+                  return NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("LockScreen Security Lock")
+                      .setContentText("Protección de barra de estado activa y vigilando")
+                      .setSmallIcon(android.R.drawable.ic_lock_lock)
+                      .setContentIntent(pendingIntent)
+                      .setOngoing(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .build()
+              }
+
+              private fun createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val channel = NotificationChannel(
+                          CHANNEL_ID,
+                          "Protección de Pantalla de Bloqueo",
+                          NotificationManager.IMPORTANCE_LOW
+                      )
+                      val manager = getSystemService(NotificationManager::class.java)
+                      manager?.createNotificationChannel(channel)
+                  }
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/SecurityDeviceAdminReceiver.kt
+          package com.security.lockscreen
+
+          import android.app.admin.DeviceAdminReceiver
+          import android.app.admin.DevicePolicyManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.os.UserManager
+
+          class SecurityDeviceAdminReceiver : DeviceAdminReceiver() {
+
+              companion object {
+                  fun getComponentName(context: Context): ComponentName {
+                      return ComponentName(context.applicationContext, SecurityDeviceAdminReceiver::class.java)
+                  }
+
+                  fun enforceAntiAdbUninstallProtection(context: Context, enableBlock: Boolean) {
+                      val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+                      val adminComponent = getComponentName(context)
+
+                      if (dpm.isDeviceOwnerApp(context.packageName)) {
+                          dpm.setUninstallBlocked(adminComponent, context.packageName, enableBlock)
+                          if (enableBlock) {
+                              dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                              dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                          } else {
+                              dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                              dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                          }
+                      }
+                  }
+
+                  fun isUninstallBlocked(context: Context): Boolean {
+                      val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+                      val adminComponent = getComponentName(context)
+                      return if (dpm.isDeviceOwnerApp(context.packageName)) {
+                          dpm.isUninstallBlocked(adminComponent, context.packageName)
+                      } else {
+                          false
+                      }
+                  }
+              }
+
+              override fun onEnabled(context: Context, intent: Intent) {
+                  super.onEnabled(context, intent)
+                  enforceAntiAdbUninstallProtection(context, true)
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/MainActivity.kt
+          package com.security.lockscreen
+
+          import android.app.admin.DevicePolicyManager
+          import android.content.Context
+          import android.content.Intent
+          import android.content.SharedPreferences
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.widget.Button
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.biometric.BiometricPrompt
+          import androidx.core.content.ContextCompat
+          import java.util.concurrent.Executor
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var prefs: SharedPreferences
+              private lateinit var switchNormalToggle: Switch
+              private lateinit var tvAdbAntiUninstallStatus: TextView
+              private lateinit var executor: Executor
+              private lateinit var biometricPrompt: BiometricPrompt
+
+              companion object {
+                  const val PREF_PROTECTION_ENABLED = "pref_protection_enabled"
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  prefs = getSharedPreferences("security_lock_prefs", Context.MODE_PRIVATE)
+                  executor = ContextCompat.getMainExecutor(this)
+
+                  setupBiometrics()
+                  initViews()
+                  updateStatus()
+
+                  SecurityForegroundService.startService(this)
+              }
+
+              private fun initViews() {
+                  switchNormalToggle = findViewById(R.id.switchNormalToggle)
+                  tvAdbAntiUninstallStatus = findViewById(R.id.tvAdbAntiUninstallStatus)
+
+                  switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+
+                  switchNormalToggle.setOnClickListener {
+                      promptAuthenticationToToggle(switchNormalToggle.isChecked)
+                  }
+
+                  findViewById<Button>(R.id.btnAdbProtection).setOnClickListener {
+                      val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                      if (dpm.isDeviceOwnerApp(packageName)) {
+                          val current = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+                          SecurityDeviceAdminReceiver.enforceAntiAdbUninstallProtection(this, !current)
+                          updateStatus()
+                          Toast.makeText(this, "Anti-Desinstalación ADB: " + if (!current) "ACTIVADO" else "DESACTIVADO", Toast.LENGTH_SHORT).show()
+                      } else {
+                          Toast.makeText(this, "Ejecuta el comando ADB para activar modo Device Owner primero", Toast.LENGTH_LONG).show()
+                      }
+                  }
+
+                  findViewById<Button>(R.id.btnPermissions).setOnClickListener {
+                      if (!Settings.canDrawOverlays(this)) {
+                          val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                          startActivity(intent)
+                      } else {
+                          Toast.makeText(this, "Permiso de superposición ya concedido", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                  }
+              }
+
+              private fun setupBiometrics() {
+                  biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+                      override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                          super.onAuthenticationSucceeded(result)
+                          val newState = !prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                          prefs.edit().putBoolean(PREF_PROTECTION_ENABLED, newState).apply()
+                          switchNormalToggle.isChecked = newState
+                          Toast.makeText(applicationContext, "Protección " + if (newState) "Habilitada" else "Deshabilitada", Toast.LENGTH_SHORT).show()
+                      }
+
+                      override fun onAuthenticationFailed() {
+                          super.onAuthenticationFailed()
+                          switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                      }
+
+                      override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                          super.onAuthenticationError(errorCode, errString)
+                          switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                      }
+                  })
+              }
+
+              private fun promptAuthenticationToToggle(targetState: Boolean) {
+                  val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                      .setTitle("Confirmar Identidad")
+                      .setSubtitle("Usa tu huella para " + if (targetState) "activar" else "desactivar" + " la protección")
+                      .setNegativeButtonText("Cancelar")
+                      .build()
+                  biometricPrompt.authenticate(promptInfo)
+              }
+
+              private fun updateStatus() {
+                  val isAdbBlocked = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+                  tvAdbAntiUninstallStatus.text = if (isAdbBlocked)
+                      "🛡 ANTI-DESINSTALACIÓN ADB: ACTIVO"
+                  else
+                      "⚠ Opcional: Anti-desinstalación ADB no activada aún"
+              }
+          }
+          EOF
+
+      - name: Build APK with Gradle
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LockScreenSecurityLock-NubiaZ60Ultra
+          path: app/build/outputs/apk/debug/app-debug.apk
