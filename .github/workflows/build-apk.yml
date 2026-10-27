@@ -30,6 +30,35 @@ jobs:
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+
+          # Si subes un archivo "icono.png" a tu repositorio, lo usa como ícono.
+          # Si no, genera automáticamente el escudo rojo con cerradura blanca del diseño original.
+          if [ -f "icono.png" ]; then
+            cp icono.png app/src/main/res/drawable/ic_app_icon.png
+          else
+            cat << 'EOF' > app/src/main/res/drawable/ic_app_icon.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#E11D48"
+                  android:pathData="M24,0 L84,0 C97.25,0 108,10.75 108,24 L108,84 C108,97.25 97.25,108 84,108 L24,108 C10.75,108 0,97.25 0,84 L0,24 C0,10.75 10.75,0 24,0 Z" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M54,20 L82,32 L82,53 C82,71.5 70,85.5 54,91 C38,85.5 26,71.5 26,53 L26,32 L54,20 Z" />
+              <path
+                  android:fillColor="#E11D48"
+                  android:pathData="M54,27 L76,37 L76,53 C76,68 66.5,79.5 54,84.5 C41.5,79.5 32,68 32,53 L32,37 L54,27 Z" />
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M48,50 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 M51,54 L57,54 L59,68 L49,68 Z" />
+          </vector>
+          EOF
+          fi
 
           cat << 'EOF' > gradle.properties
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
@@ -53,7 +82,7 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "LockScreenSecurityLock"
+          rootProject.name = "AndroidSecurityLockscreen"
           include(":app")
           EOF
 
@@ -102,7 +131,7 @@ jobs:
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">LockScreen Security Lock</string>
+              <string name="app_name">Android Security Lockscreen</string>
               <string name="accessibility_service_description">Protección de barra de estado en pantalla de bloqueo para Nubia Z60 Ultra</string>
           </resources>
           EOF
@@ -147,7 +176,7 @@ jobs:
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="LockScreen Security Lock"
+                  android:text="Android Security Lockscreen"
                   android:textSize="22sp"
                   android:textStyle="bold"
                   android:layout_marginBottom="24dp" />
@@ -205,8 +234,9 @@ jobs:
 
               <application
                   android:allowBackup="false"
-                  android:icon="@android:drawable/ic_lock_lock"
-                  android:label="LockScreen Security Lock"
+                  android:icon="@drawable/ic_app_icon"
+                  android:roundIcon="@drawable/ic_app_icon"
+                  android:label="@string/app_name"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
@@ -276,7 +306,6 @@ jobs:
           import android.app.KeyguardManager
           import android.content.Context
           import android.os.SystemClock
-          import android.util.Log
           import android.view.accessibility.AccessibilityEvent
 
           class LockScreenAccessibilityService : AccessibilityService() {
@@ -473,9 +502,9 @@ jobs:
                   )
 
                   return NotificationCompat.Builder(this, CHANNEL_ID)
-                      .setContentTitle("LockScreen Security Lock")
+                      .setContentTitle("Android Security Lockscreen")
                       .setContentText("Protección de barra de estado activa y vigilando")
-                      .setSmallIcon(android.R.drawable.ic_lock_lock)
+                      .setSmallIcon(R.drawable.ic_app_icon)
                       .setContentIntent(pendingIntent)
                       .setOngoing(true)
                       .setPriority(NotificationCompat.PRIORITY_LOW)
