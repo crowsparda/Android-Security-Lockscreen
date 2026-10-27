@@ -19,11 +19,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
-
       - name: Generar estructura completa del proyecto Android
         run: |
           mkdir -p app/src/main/java/com/security/lockscreen
@@ -262,7 +257,6 @@ jobs:
                   android:supportsRtl="true"
                   android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
-                  <!-- Actividad Principal: Integrada en Ajustes > Seguridad y Ajustes de la App -->
                   <activity
                       android:name=".MainActivity"
                       android:enabled="true"
@@ -287,7 +281,6 @@ jobs:
                           android:resource="@drawable/ic_app_icon" />
                   </activity>
 
-                  <!-- Alias del Ícono en el Cajón de Aplicaciones (Permite ocultarlo sin apagar la app) -->
                   <activity-alias
                       android:name=".LauncherAlias"
                       android:targetActivity=".MainActivity"
@@ -606,6 +599,292 @@ jobs:
                   }
                   ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
               }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  try {
+                      unregisterReceiver(screenReceiver)
+                  } catch (e: Exception) {
+                      e.printStackTrace()
+                  }
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              private fun buildForegroundNotification(): Notification {
+                  val openIntent = Intent(this, MainActivity::class.java)
+                  val pendingIntent = PendingIntent.getActivity(
+                      this, 0, openIntent,
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                  )
+
+                  return NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("Android Security Lockscreen")
+                      .setContentText("Protección de barra de estado activa y vigilando")
+                      .setSmallIcon(R.drawable.ic_app_icon)
+                      .setContentIntent(pendingIntent)
+                      .setOngoing(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .build()
+              }
+
+              private fun createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val channel = NotificationChannel(
+                          CHANNEL_ID,
+                          "Protección de Pantalla de Bloqueo",
+                          NotificationManager.IMPORTANCE_LOW
+                      )
+                      val manager = getSystemService(NotificationManager::class.java)
+                      manager?.createNotificationChannel(channel)
+                  }
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/SecurityDeviceAdminReceiver.kt
+          package com.security.lockscreen
+
+          import android.app.admin.DeviceAdminReceiver
+          import android.app.admin.DevicePolicyManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.os.Build
+          import android.os.UserManager
+
+          class SecurityDeviceAdminReceiver : DeviceAdminReceiver() {
+
+              companion object {
+                  fun getComponentName(context: Context): ComponentName {
+                      return ComponentName(context.applicationContext, SecurityDeviceAdminReceiver::class.java)
+                  }
+
+                  fun setStatusBarLocked(context: Context, disabled: Boolean) {
+                      val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+                      val adminComponent = getComponentName(context)
+                      if (dpm.isDeviceOwnerApp(context.packageName) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                          try {
+                              dpm.setStatusBarDisabled(adminComponent, disabled)
+                          } catch (e: Exception) {
+                              e.printStackTrace()
+                          }
+                      }
+                  }
+
+                  fun enforceAntiAdbUninstallProtection(context: Context, enableBlock: Boolean) {
+                      val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+                      val adminComponent = getComponentName(context)
+
+                      if (dpm.isDeviceOwnerApp(context.packageName)) {
+                          dpm.setUninstallBlocked(adminComponent, context.packageName, enableBlock)
+                          if (enableBlock) {
+                              dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                              dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                          } else {
+                              dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                              dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                          }
+                      }
+                  }
+
+                  fun isUninstallBlocked(context: Context): Boolean {
+                      val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+                      val adminComponent = getComponentName(context)
+                      return if (dpm.isDeviceOwnerApp(context.packageName)) {
+                          dpm.isUninstallBlocked(adminComponent, context.packageName)
+                      } else {
+                          false
+                      }
+                  }
+              }
+
+              override fun onEnabled(context: Context, intent: Intent) {
+                  super.onEnabled(context, intent)
+                  enforceAntiAdbUninstallProtection(context, true)
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/security/lockscreen/MainActivity.kt
+          package com.security.lockscreen
+
+          import android.app.admin.DevicePolicyManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.content.SharedPreferences
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.widget.Button
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.biometric.BiometricPrompt
+          import androidx.core.content.ContextCompat
+          import java.util.concurrent.Executor
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var prefs: SharedPreferences
+              private lateinit var switchNormalToggle: Switch
+              private lateinit var switchHideIcon: Switch
+              private lateinit var tvAdbAntiUninstallStatus: TextView
+              private lateinit var executor: Executor
+              private lateinit var biometricPrompt: BiometricPrompt
+              private var pendingAction: (() -> Unit)? = null
+
+              companion object {
+                  const val PREF_PROTECTION_ENABLED = "pref_protection_enabled"
+                  const val PREF_HIDE_ICON = "pref_hide_icon"
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  prefs = getSharedPreferences("security_lock_prefs", Context.MODE_PRIVATE)
+                  executor = ContextCompat.getMainExecutor(this)
+
+                  setupBiometrics()
+                  initViews()
+                  updateStatus()
+
+                  SecurityForegroundService.startService(this)
+              }
+
+              private fun initViews() {
+                  switchNormalToggle = findViewById(R.id.switchNormalToggle)
+                  switchHideIcon = findViewById(R.id.switchHideIcon)
+                  tvAdbAntiUninstallStatus = findViewById(R.id.tvAdbAntiUninstallStatus)
+
+                  switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                  switchHideIcon.isChecked = prefs.getBoolean(PREF_HIDE_ICON, false)
+
+                  switchNormalToggle.setOnClickListener {
+                      val desiredState = switchNormalToggle.isChecked
+                      authenticateAndRun("Usa tu huella para cambiar la protección") {
+                          prefs.edit().putBoolean(PREF_PROTECTION_ENABLED, desiredState).apply()
+                          switchNormalToggle.isChecked = desiredState
+                          Toast.makeText(this, "Protección " + if (desiredState) "Habilitada" else "Deshabilitada", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  switchHideIcon.setOnClickListener {
+                      val hide = switchHideIcon.isChecked
+                      authenticateAndRun("Usa tu huella para ocultar/mostrar el ícono") {
+                          prefs.edit().putBoolean(PREF_HIDE_ICON, hide).apply()
+                          setLauncherIconHidden(hide)
+                          switchHideIcon.isChecked = hide
+                          val msg = if (hide)
+                              "Ícono oculto. Abre la app desde Ajustes > Seguridad o Accesibilidad."
+                          else
+                              "Ícono visible nuevamente en el cajón de aplicaciones."
+                          Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                      }
+                  }
+
+                  findViewById<Button>(R.id.btnAdbProtection).setOnClickListener {
+                      val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                      if (dpm.isDeviceOwnerApp(packageName)) {
+                          val current = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+                          SecurityDeviceAdminReceiver.enforceAntiAdbUninstallProtection(this, !current)
+                          updateStatus()
+                          Toast.makeText(this, "Anti-Desinstalación ADB: " + if (!current) "ACTIVADO" else "DESACTIVADO", Toast.LENGTH_SHORT).show()
+                      } else {
+                          Toast.makeText(this, "Ejecuta el comando ADB para activar modo Device Owner primero", Toast.LENGTH_LONG).show()
+                      }
+                  }
+
+                  findViewById<Button>(R.id.btnPermissions).setOnClickListener {
+                      if (!Settings.canDrawOverlays(this)) {
+                          val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                          startActivity(intent)
+                      } else {
+                          Toast.makeText(this, "Permiso de superposición ya concedido", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
+                      startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                  }
+              }
+
+              private fun setLauncherIconHidden(hide: Boolean) {
+                  val aliasComponent = ComponentName(this, "$packageName.LauncherAlias")
+                  val newState = if (hide)
+                      PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                  else
+                      PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+
+                  packageManager.setComponentEnabledSetting(
+                      aliasComponent,
+                      newState,
+                      PackageManager.DONT_KILL_APP
+                  )
+              }
+
+              private fun setupBiometrics() {
+                  biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+                      override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                          super.onAuthenticationSucceeded(result)
+                          pendingAction?.invoke()
+                          pendingAction = null
+                      }
+
+                      override fun onAuthenticationFailed() {
+                          super.onAuthenticationFailed()
+                          restoreSwitchStates()
+                      }
+
+                      override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                          super.onAuthenticationError(errorCode, errString)
+                          restoreSwitchStates()
+                          pendingAction = null
+                      }
+                  })
+              }
+
+              private fun restoreSwitchStates() {
+                  switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                  switchHideIcon.isChecked = prefs.getBoolean(PREF_HIDE_ICON, false)
+              }
+
+              private fun authenticateAndRun(subtitle: String, action: () -> Unit) {
+                  pendingAction = action
+                  val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                      .setTitle("Confirmar Identidad")
+                      .setSubtitle(subtitle)
+                      .setNegativeButtonText("Cancelar")
+                      .build()
+                  biometricPrompt.authenticate(promptInfo)
+              }
+
+              private fun updateStatus() {
+                  val isAdbBlocked = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+                  tvAdbAntiUninstallStatus.text = if (isAdbBlocked)
+                      "🛡 ANTI-DESINSTALACIÓN ADB: ACTIVO"
+                  else
+                      "⚠ Opcional: Anti-desinstalación ADB no activada aún"
+              }
+          }
+          EOF
+
+      - name: Generar wrapper y Compilar APK con Gradle
+        run: |
+          gradle wrapper --gradle-version 8.7
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AndroidSecurityLockscreen.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidSecurityLockscreen
+          path: app/build/outputs/apk/debug/AndroidSecurityLockscreen.apk
 
               override fun onDestroy() {
                   super.onDestroy()
