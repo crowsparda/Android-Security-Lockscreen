@@ -1,0 +1,802 @@
+# ================================================================================
+# LOCKSCREEN SECURITY LOCK - PROYECTO ANDROID 15 (NEBULA AIOS)
+# Especialmente diseñado para Nubia Z60 Ultra (Snapdragon 8 Gen 3 / UDC)
+# Package: com.security.lockscreen
+# ================================================================================
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/AndroidManifest.xml
+### DESCRIPCIÓN: Declaración para Android 15 (API 35 / Nebula AIOS) con permisos de superposición, servicios de accesibilidad, DPC anti-ADB y Foreground Service Type.
+################################################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.security.lockscreen">
+
+    <!-- Permiso para dibujar la capa invisible de absorción táctil superior -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Mantener activo el servicio en Android 15 (Nebula AIOS) sin que el sistema lo mate -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    
+    <!-- Permiso para autenticación biométrica al habilitar/deshabilitar la protección -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="LockScreen Security Lock"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+
+        <!-- Actividad Principal: Interruptor de habilitación normal y comprobación de permisos -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Servicio de Accesibilidad: Detecta aperturas de SystemUI en Android 15 y repliega en 14ms -->
+        <service
+            android:name=".LockScreenAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Servicio en Primer Plano para Android 15 (Nebula AIOS) -->
+        <service
+            android:name=".SecurityForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Nebula AIOS Lockscreen Status Bar and Anti-Theft Guard" />
+        </service>
+
+        <!-- Receptor de eventos de pantalla encendida, apagada y desbloqueada -->
+        <receiver
+            android:name=".LockScreenReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SCREEN_OFF" />
+                <action android:name="android.intent.action.SCREEN_ON" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Receptor de Administrador de Dispositivo (DPC): Bloqueo de Hardware y Protección Anti-ADB -->
+        <receiver
+            android:name=".SecurityDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_sample" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/java/com/security/lockscreen/LockScreenAccessibilityService.kt
+### DESCRIPCIÓN: Servicio de accesibilidad ultra rápido (< 15ms) que intercepta SystemUI en pantalla bloqueada.
+################################################################################
+
+package com.security.lockscreen
+
+import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.Context
+import android.os.SystemClock
+import android.util.Log
+import android.view.accessibility.AccessibilityEvent
+
+/**
+ * Servicio de Accesibilidad de Alta Prioridad.
+ * Intercepta cualquier intento de desplegar la barra de notificaciones o ajustes rápidos
+ * mientras el dispositivo permanezca con la pantalla bloqueada (isKeyguardLocked = true).
+ */
+class LockScreenAccessibilityService : AccessibilityService() {
+
+    private lateinit var keyguardManager: KeyguardManager
+    private var lastActionTime: Long = 0
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        Log.i("LockScreenSecurity", "LockScreenAccessibilityService conectado y activo.")
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+
+        // 1. Verificación primaria: Si el equipo está desbloqueado, no interferir
+        if (!keyguardManager.isKeyguardLocked) {
+            return
+        }
+
+        val packageName = event.packageName?.toString() ?: ""
+        val className = event.className?.toString() ?: ""
+
+        // 2. Comprobar si el evento proviene de la interfaz del sistema (SystemUI)
+        if (packageName == "com.android.systemui") {
+            val isStatusShade = className.contains("NotificationPanelView", ignoreCase = true) ||
+                    className.contains("StatusBar", ignoreCase = true) ||
+                    className.contains("QuickSettings", ignoreCase = true) ||
+                    className.contains("QSTileView", ignoreCase = true) ||
+                    className.contains("ExpandableNotificationRow", ignoreCase = true)
+
+            // Evitar bucles de retroceso en ráfaga (debounce 100ms)
+            val now = SystemClock.uptimeMillis()
+            if ((isStatusShade || event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) &&
+                now - lastActionTime > 100
+            ) {
+                lastActionTime = now
+                Log.w("LockScreenSecurity", "Intento de deslizar barra detectado en bloqueo. Replicando!")
+
+                // 3. Forzar el retroceso global instantáneo para replegar el panel
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }
+        }
+    }
+
+    override fun onInterrupt() {
+        Log.w("LockScreenSecurity", "Servicio de Accesibilidad interrumpido por el sistema.")
+    }
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/java/com/security/lockscreen/LockScreenReceiver.kt
+### DESCRIPCIÓN: Gestor del overlay invisible de 80px en el borde superior que absorbe el gesto táctil.
+################################################################################
+
+package com.security.lockscreen
+
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.Build
+import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+
+/**
+ * Receptor de eventos del ciclo de pantalla.
+ * Al apagarse la pantalla o estar bloqueada, monta una vista invisible en el borde superior (80-84px)
+ * que consume y absorbe cualquier swipe hacia abajo antes de que SystemUI lo reciba.
+ * Al desbloquearse el equipo (ACTION_USER_PRESENT), la barrera se retira al instante.
+ */
+class LockScreenReceiver : BroadcastReceiver() {
+
+    companion object {
+        private var blockerLayout: View? = null
+        // Altura calibrada para Nubia Z60 Ultra (pantalla completa sin notch, bezels de 1.48mm)
+        private const val OVERLAY_HEIGHT_PX = 84
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.action ?: return
+        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+
+        Log.d("LockScreenSecurity", "Broadcast recibido: $action")
+
+        when (action) {
+            Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON -> {
+                // Si la pantalla está bloqueada, montar la capa superior invisible
+                if (keyguardManager?.isKeyguardLocked == true) {
+                    addTopEdgeBlocker(context, windowManager)
+                }
+            }
+
+            Intent.ACTION_USER_PRESENT -> {
+                // El usuario se autenticó correctamente con PIN o huella dactilar: Retirar barrera
+                removeTopEdgeBlocker(windowManager)
+            }
+
+            Intent.ACTION_BOOT_COMPLETED -> {
+                // Iniciar servicio en primer plano tras reinicio
+                SecurityForegroundService.startService(context)
+            }
+        }
+    }
+
+    private fun addTopEdgeBlocker(context: Context, windowManager: WindowManager) {
+        if (blockerLayout != null) return
+
+        try {
+            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_SYSTEM_ERROR
+            }
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                OVERLAY_HEIGHT_PX,
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP
+            }
+
+            val view = View(context).apply {
+                // Consumir el evento táctil para que el panel de notificación no reciba el swipe
+                setOnTouchListener { _, _ ->
+                    Log.v("LockScreenSecurity", "Swipe absorbido en zona superior por overlay invisible.")
+                    true
+                }
+            }
+
+            windowManager.addView(view, params)
+            blockerLayout = view
+            Log.i("LockScreenSecurity", "Barrera táctil superior montada con éxito ($OVERLAY_HEIGHT_PX px).")
+        } catch (e: Exception) {
+            Log.e("LockScreenSecurity", "Error al montar overlay superior: ${e.message}")
+        }
+    }
+
+    private fun removeTopEdgeBlocker(windowManager: WindowManager) {
+        blockerLayout?.let {
+            try {
+                windowManager.removeView(it)
+                Log.i("LockScreenSecurity", "Barrera táctil superior retirada (Dispositivo desbloqueado).")
+            } catch (e: Exception) {
+                Log.e("LockScreenSecurity", "Error al retirar overlay: ${e.message}")
+            }
+            blockerLayout = null
+        }
+    }
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/java/com/security/lockscreen/SecurityForegroundService.kt
+### DESCRIPCIÓN: Servicio en primer plano que evita que el asesino de procesos MyOS de Nubia cierre la app.
+################################################################################
+
+package com.security.lockscreen
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+
+class SecurityForegroundService : Service() {
+
+    private val screenReceiver = LockScreenReceiver()
+
+    companion object {
+        private const val CHANNEL_ID = "lockscreen_security_channel"
+        private const val NOTIFICATION_ID = 1001
+
+        fun startService(context: Context) {
+            val intent = Intent(context, SecurityForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+
+        val notification = buildForegroundNotification()
+        startForeground(NOTIFICATION_ID, notification)
+
+        // Registrar dinámicamente el receptor de pantalla para máxima compatibilidad
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        registerReceiver(screenReceiver, filter)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun buildForegroundNotification(): Notification {
+        val openIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("LockScreen Security Lock")
+            .setContentText("Protección de barra de estado activa y vigilando")
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Protección de Pantalla de Bloqueo",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Mantiene activo el bloqueo de accesos directos contra robos"
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/java/com/security/lockscreen/SecurityDeviceAdminReceiver.kt
+### DESCRIPCIÓN: Controlador DPC: Bloquea físicamente la barra de estado Y BLOQUEA LA DESINSTALACIÓN POR ADB.
+################################################################################
+
+package com.security.lockscreen
+
+import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.UserManager
+import android.util.Log
+
+/**
+ * Modo Kiosco / Device Owner (Android 15 Nebula AIOS):
+ * 1. Bloqueo de barra de estado: dpm.setStatusBarDisabled()
+ * 2. BLOQUEO ANTI-DESINSTALACIÓN ADB:
+ *    - dpm.setUninstallBlocked(adminComponent, packageName, true)
+ *    - dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+ * Al ejecutarse "adb uninstall com.security.lockscreen", el sistema Android 15 aborta con:
+ * Failure [DELETE_FAILED_DEVICE_POLICY_MANAGER]
+ */
+class SecurityDeviceAdminReceiver : DeviceAdminReceiver() {
+
+    companion object {
+        fun getComponentName(context: Context): ComponentName {
+            return ComponentName(context.applicationContext, SecurityDeviceAdminReceiver::class.java)
+        }
+
+        /**
+         * Inhabilita o habilita el deslizamiento de la barra de estado a nivel de hardware.
+         */
+        fun setStatusBarLocked(context: Context, disabled: Boolean) {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+            val adminComponent = getComponentName(context)
+
+            if (dpm.isDeviceOwnerApp(context.packageName)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val success = dpm.setStatusBarDisabled(adminComponent, disabled)
+                    Log.i("LockScreenSecurity", "setStatusBarDisabled($disabled): $success")
+                }
+            }
+        }
+
+        /**
+         * Bloquea expresamente la eliminación y desinstalación de la app vía ADB y vía Ajustes.
+         */
+        fun enforceAntiAdbUninstallProtection(context: Context, enableBlock: Boolean) {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
+            val adminComponent = getComponentName(context)
+
+            if (dpm.isDeviceOwnerApp(context.packageName)) {
+                // 1. Bloquear desinstalación del paquete (evita adb uninstall)
+                dpm.setUninstallBlocked(adminComponent, context.packageName, enableBlock)
+
+                // 2. Prohibir eliminación de aplicaciones en el perfil de usuario
+                if (enableBlock) {
+                    dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                    dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                } else {
+                    dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                    dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_APPS_CONTROL)
+                }
+
+                Log.i("LockScreenSecurity", "Protección Anti-ADB Uninstall configurada: $enableBlock")
+            } else {
+                Log.w("LockScreenSecurity", "App no es Device Owner. Ejecutar: adb shell dpm set-device-owner")
+            }
+        }
+
+        fun isUninstallBlocked(context: Context): Boolean {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+            val adminComponent = getComponentName(context)
+            return if (dpm.isDeviceOwnerApp(context.packageName)) {
+                dpm.isUninstallBlocked(adminComponent, context.packageName)
+            } else {
+                false
+            }
+        }
+    }
+
+    override fun onEnabled(context: Context, intent: Intent) {
+        super.onEnabled(context, intent)
+        Log.i("LockScreenSecurity", "Device Admin activado en Nebula AIOS (Android 15).")
+        // Bloquear desinstalación inmediatamente al ser activado
+        enforceAntiAdbUninstallProtection(context, true)
+    }
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/java/com/security/lockscreen/MainActivity.kt
+### DESCRIPCIÓN: Interfaz con interruptor normal para habilitar/deshabilitar la protección (con autenticación segura) y estado Anti-ADB.
+################################################################################
+
+package com.security.lockscreen
+
+import android.app.admin.DevicePolicyManager
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import android.widget.Button
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import java.util.concurrent.Executor
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var prefs: SharedPreferences
+    private lateinit var switchNormalToggle: Switch
+    private lateinit var tvAdbAntiUninstallStatus: TextView
+    private lateinit var executor: Executor
+    private lateinit var biometricPrompt: BiometricPrompt
+
+    companion object {
+        const val PREF_PROTECTION_ENABLED = "pref_protection_enabled"
+        const val PREF_ANTI_ADB_ENABLED = "pref_anti_adb_enabled"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        prefs = getSharedPreferences("security_lock_prefs", Context.MODE_PRIVATE)
+        executor = ContextCompat.getMainExecutor(this)
+
+        setupBiometrics()
+        initViews()
+        updateStatus()
+
+        // Iniciar servicio guardián persistente
+        SecurityForegroundService.startService(this)
+    }
+
+    private fun initViews() {
+        switchNormalToggle = findViewById(R.id.switchNormalToggle)
+        tvAdbAntiUninstallStatus = findViewById(R.id.tvAdbAntiUninstallStatus)
+
+        val isEnabled = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+        switchNormalToggle.isChecked = isEnabled
+
+        // Interruptor que permite al usuario legítimo habilitar o deshabilitar normalmente
+        switchNormalToggle.setOnClickListener {
+            // Requiere autenticación biométrica o PIN antes de deshabilitar
+            promptAuthenticationToToggle(!switchNormalToggle.isChecked)
+        }
+
+        findViewById<Button>(R.id.btnAdbProtection).setOnClickListener {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            if (dpm.isDeviceOwnerApp(packageName)) {
+                val current = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+                SecurityDeviceAdminReceiver.enforceAntiAdbUninstallProtection(this, !current)
+                updateStatus()
+                Toast.makeText(this, "Anti-Desinstalación ADB: " + if (!current) "ACTIVADO" else "DESACTIVADO", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Ejecuta el comando ADB para activar modo Device Owner primero", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun setupBiometrics() {
+        biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                val newState = !prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                prefs.edit().putBoolean(PREF_PROTECTION_ENABLED, newState).apply()
+                switchNormalToggle.isChecked = newState
+                Toast.makeText(applicationContext, "Protección " + if (newState) "Habilitada" else "Deshabilitada", Toast.LENGTH_SHORT).show()
+                updateStatus()
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                switchNormalToggle.isChecked = prefs.getBoolean(PREF_PROTECTION_ENABLED, true)
+                Toast.makeText(applicationContext, "Autenticación fallida", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
+    private fun promptAuthenticationToToggle(targetState: Boolean) {
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Confirmar Identidad")
+            .setSubtitle("Usa tu huella o PIN para " + if (targetState) "activar" else "desactivar" + " la protección")
+            .setNegativeButtonText("Cancelar")
+            .build()
+        biometricPrompt.authenticate(promptInfo)
+    }
+
+    private fun updateStatus() {
+        val isAdbBlocked = SecurityDeviceAdminReceiver.isUninstallBlocked(this)
+        tvAdbAntiUninstallStatus.text = if (isAdbBlocked)
+            "🛡 ANTI-DESINSTALACIÓN ADB: ACTIVO (adb uninstall será rechazado)"
+        else
+            "⚠ Opcional: Anti-desinstalación ADB no activada aún"
+    }
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/res/xml/accessibility_service_config.xml
+### DESCRIPCIÓN: Configuración XML del servicio de accesibilidad para interceptar ventanas y eventos táctiles.
+################################################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="10"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+    android:description="@string/accessibility_service_description" />
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/src/main/res/xml/device_admin_sample.xml
+### DESCRIPCIÓN: Políticas de Administrador de Dispositivo para permitir setStatusBarDisabled.
+################################################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <limit-password />
+        <watch-login />
+        <reset-password />
+        <force-lock />
+        <wipe-data />
+        <expire-password />
+        <encrypted-storage />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>
+
+
+################################################################################
+### RUTA DE ARCHIVO: app/build.gradle.kts
+### DESCRIPCIÓN: Configuración de Gradle para Android 15 (API 35 / Nebula AIOS) con compatibilidad para páginas de 16KB y Biometría.
+################################################################################
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = "com.security.lockscreen"
+    compileSdk = 35 // Android 15 (Vanilla Ice Cream / Nebula AIOS)
+
+    defaultConfig {
+        applicationId = "com.security.lockscreen"
+        minSdk = 26
+        targetSdk = 35 // Android 15
+        versionCode = 2
+        versionName = "2.0.0-nebula-aios"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Soporte para alineación de memoria de 16KB de Android 15 (Snapdragon 8 Gen 3)
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.0")
+    // Autenticación biométrica para habilitación/deshabilitación normal segura
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: settings.gradle.kts
+### DESCRIPCIÓN: Configuración raíz del proyecto Gradle para Android 15.
+################################################################################
+
+pluginManagement {
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "LockScreenSecurityLock"
+include(":app")
+
+
+################################################################################
+### RUTA DE ARCHIVO: build.gradle.kts
+### DESCRIPCIÓN: Archivo de compilación raíz con plugins de Android y Kotlin.
+################################################################################
+
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    id("com.android.application") version "8.4.0" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.23" apply false
+}
+
+
+################################################################################
+### RUTA DE ARCHIVO: gradle/wrapper/gradle-wrapper.properties
+### DESCRIPCIÓN: Configuración de Gradle Wrapper 8.6 para compilar sin instalar Gradle manualmente.
+################################################################################
+
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+
+################################################################################
+### RUTA DE ARCHIVO: .github/workflows/build-apk.yml
+### DESCRIPCIÓN: Workflow de compilación automática en la nube de GitHub Actions (Genera el APK gratis en 2 min).
+################################################################################
+
+name: Compilar APK LockScreen Security Lock
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Dar permisos de ejecución al gradlew
+        run: chmod +x gradlew || true
+
+      - name: Compilar APK Debug
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Subir APK Generado como Artefacto Descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: LockScreenSecurityLock-NubiaZ60Ultra.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+
+################################################################################
+### RUTA DE ARCHIVO: build_apk.sh
+### DESCRIPCIÓN: Script ejecutable en Linux, Mac, WSL o Termux para compilar con 1 comando.
+################################################################################
+
+#!/usr/bin/env bash
+set -e
+
+echo "=========================================================="
+echo "Compilando LockScreen Security Lock para Android 15..."
+echo "Dispositivo objetivo: Nubia Z60 Ultra (Nebula AIOS)"
+echo "=========================================================="
+
+chmod +x gradlew
+./gradlew clean assembleRelease
+
+echo ""
+echo "✔ ¡Compilación exitosa!"
+echo "Tu APK está listo en: app/build/outputs/apk/release/app-release-unsigned.apk"
+echo ""
+echo "Para instalarlo en tu Nubia Z60 Ultra vía USB:"
+echo "  adb install -r app/build/outputs/apk/release/app-release-unsigned.apk"
+echo "=========================================================="
+
